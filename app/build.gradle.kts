@@ -109,7 +109,6 @@ android {
     viewBinding = true
     buildConfig = true
     resValues = true
-    prefab = true
   }
 
   packaging {
@@ -234,7 +233,6 @@ dependencies {
   implementation(files("libs/mpvlib.aar"))
 
   // Network protocol libraries
-  implementation("io.github.vvb2060.ndk:curl:8.18.0")
   implementation(libs.smbj)
   implementation(libs.commons.net)
   implementation(libs.sardine.android) {

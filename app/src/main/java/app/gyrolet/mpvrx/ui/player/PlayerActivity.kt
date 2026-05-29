@@ -1213,7 +1213,6 @@ class PlayerActivity :
     // Prepare only the launch-critical files before initializing MPV.
     runCatching {
       syncBundledAssetsIfNeeded()
-      prepareCurlScripts()
       syncFromUserMpvDirectory(syncSubtitleFontsFolder = false)
       sanitizeInternalFontsDirectory()
       Log.d(TAG, "MPV config and scripts prepared successfully")
@@ -1355,7 +1354,6 @@ class PlayerActivity :
         destinationDir = internalScriptsDir,
         includeFile = { name -> name.substringAfterLast('.', "").lowercase() in scriptExtensions },
         allowedNames = selectedScripts,
-        protectedNames = setOf("00-curl-hook.lua", "00-curl-hook.js"),
         deleteMissing = true,
       )
 
@@ -1466,37 +1464,6 @@ class PlayerActivity :
 
     Utils.copyAssets(this@PlayerActivity)
     syncPrefs.edit().putLong("bundled_assets_version", currentVersion).apply()
-  }
-
-  private fun prepareCurlScripts() {
-    val scriptsDir = File(filesDir, "scripts")
-    if (!scriptsDir.exists()) {
-      scriptsDir.mkdirs()
-    }
-    
-    // Copy 00-curl-hook.lua
-    try {
-      assets.open("scripts/00-curl-hook.lua").use { input ->
-        File(scriptsDir, "00-curl-hook.lua").outputStream().use { output ->
-          input.copyTo(output)
-        }
-      }
-      Log.d(TAG, "Copied 00-curl-hook.lua successfully")
-    } catch (e: Exception) {
-      Log.e(TAG, "Error copying 00-curl-hook.lua", e)
-    }
-
-    // Copy 00-curl-hook.js
-    try {
-      assets.open("scripts/00-curl-hook.js").use { input ->
-        File(scriptsDir, "00-curl-hook.js").outputStream().use { output ->
-          input.copyTo(output)
-        }
-      }
-      Log.d(TAG, "Copied 00-curl-hook.js successfully")
-    } catch (e: Exception) {
-      Log.e(TAG, "Error copying 00-curl-hook.js", e)
-    }
   }
 
   private fun scheduleDeferredSubtitleFontsSync() {
