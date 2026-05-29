@@ -46,6 +46,7 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
@@ -72,6 +73,7 @@ import app.gyrolet.mpvrx.ui.preferences.CustomButtonScriptLanguage
 import app.gyrolet.mpvrx.ui.player.screenshot.ScreenshotSaver
 import app.gyrolet.mpvrx.ui.player.screenshot.ScreenshotSettings
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.security.MessageDigest
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
@@ -3043,9 +3045,99 @@ class PlayerViewModel(
       "seek_by" -> seekByWithText(data.toInt(), null)
       "seek_to" -> seekToWithText(data.toInt(), null)
       "software_keyboard" -> handleSoftwareKeyboard(data)
+      "run_curl" -> handleRunCurl(data)
     }
 
     MPVLib.setPropertyString(property, "")
+  }
+
+  private fun handleRunCurl(reqId: String) {
+    if (!reqId.matches(Regex("[A-Za-z0-9_\\-]+"))) {
+      Log.e("PlayerViewModel", "run_curl: Invalid request id: $reqId")
+      return
+    }
+
+    viewModelScope.launch(Dispatchers.IO) {
+      val filesDir = host.context.filesDir
+      val reqFile = File(filesDir, "curl_req_$reqId.json")
+      val resFile = File(filesDir, "curl_res_$reqId.json")
+      try {
+        if (!reqFile.exists()) {
+          Log.e("PlayerViewModel", "run_curl: Request file does not exist: ${reqFile.absolutePath}")
+          writeCurlResponse(resFile, -1, "", "Request file not found", "init")
+          return@launch
+        }
+
+        val reqJson = reqFile.readText()
+        reqFile.delete()
+        val jsonObject = org.json.JSONObject(reqJson)
+        val argsArray = jsonObject.getJSONArray("args")
+        val argsList = mutableListOf<String>()
+        for (i in 0 until argsArray.length()) {
+          argsList.add(argsArray.getString(i))
+        }
+
+        if (argsList.isEmpty()) {
+          Log.e("PlayerViewModel", "run_curl: Request arguments are empty")
+          return@launch
+        }
+
+        val curlBinaryPath = File(host.context.applicationInfo.nativeLibraryDir, "libcurl.so").absolutePath
+        if (!File(curlBinaryPath).exists()) {
+          writeCurlResponse(resFile, -1, "", "curl binary not found: $curlBinaryPath", "init")
+          return@launch
+        }
+
+        argsList[0] = curlBinaryPath
+
+        val processBuilder = ProcessBuilder(argsList)
+          .directory(filesDir)
+
+        val cacertPath = File(filesDir, "cacert.pem").absolutePath
+        processBuilder.environment()["CURL_CA_BUNDLE"] = cacertPath
+        processBuilder.environment()["SSL_CERT_FILE"] = cacertPath
+        processBuilder.environment()["HOME"] = filesDir.absolutePath
+
+        val process = processBuilder.start()
+        val stdoutDeferred = async { process.inputStream.bufferedReader().use { it.readText() } }
+        val stderrDeferred = async { process.errorStream.bufferedReader().use { it.readText() } }
+
+        val finished = process.waitFor(60, TimeUnit.SECONDS)
+        if (!finished) {
+          process.destroyForcibly()
+        }
+        val stdoutString = stdoutDeferred.await()
+        val stderrString = stderrDeferred.await()
+        val exitCode = if (finished) process.exitValue() else -1
+        val errorString = if (finished) "" else "timeout"
+        val stderr = if (finished) stderrString else stderrString.ifBlank { "Curl subprocess timeout" }
+        writeCurlResponse(resFile, exitCode, stdoutString, stderr, errorString)
+      } catch (e: Exception) {
+        Log.e("PlayerViewModel", "run_curl: Exception running curl", e)
+        writeCurlResponse(resFile, -1, "", e.message ?: "Unknown error", "exception")
+      } finally {
+        runCatching { reqFile.delete() }
+      }
+    }
+  }
+
+  private fun writeCurlResponse(
+    resFile: File,
+    status: Int,
+    stdout: String,
+    stderr: String,
+    errorString: String,
+  ) {
+    runCatching {
+      val resJson = org.json.JSONObject()
+      resJson.put("status", status)
+      resJson.put("stdout", stdout)
+      resJson.put("stderr", stderr)
+      resJson.put("error_string", errorString)
+      resFile.writeText(resJson.toString())
+    }.onFailure { inner ->
+      Log.e("PlayerViewModel", "run_curl: Failed to write response", inner)
+    }
   }
 
   private fun handleToggleUI(data: String) {
@@ -3773,11 +3865,10 @@ class PlayerViewModel(
   }
 
   fun setHdrScreenMode(mode: HdrScreenMode) {
-    val pipelineReady = isHdrScreenOutputAvailable(mode)
+    val pipelineState = hdrScreenOutputPipelineState(mode)
+    val pipelineReady = pipelineState.available
     if (mode != HdrScreenMode.OFF && !pipelineReady) {
-      val message = if (mode == HdrScreenMode.LINEAR) "Linear HDR needs GPU Next + Vulkan"
-                    else "HDR Screen output needs GPU Next"
-      playerUpdate.value = PlayerUpdates.ShowText(message)
+      playerUpdate.value = PlayerUpdates.ShowText(pipelineState.message)
       applyHdrScreenOutput(HdrScreenMode.OFF)
       return
     }
@@ -3791,12 +3882,64 @@ class PlayerViewModel(
   }
 
   private fun isHdrScreenOutputAvailable(mode: HdrScreenMode = _hdrScreenMode.value): Boolean {
-    val needsVulkan = mode == HdrScreenMode.LINEAR
-    return if (needsVulkan) {
-      decoderPreferences.useVulkan.get() && decoderPreferences.gpuNext.get()
-    } else {
-      decoderPreferences.gpuNext.get()
-    }
+    return hdrScreenOutputPipelineState(mode).available
+  }
+
+  private data class HdrPipelineState(
+    val available: Boolean,
+    val message: String,
+  )
+
+  private data class RuntimeRenderBackend(
+    val vo: String,
+    val currentVo: String,
+    val gpuApi: String,
+    val gpuContext: String,
+  ) {
+    val isGpuNext: Boolean
+      get() = vo.equals("gpu-next", ignoreCase = true) ||
+        currentVo.contains("gpu-next", ignoreCase = true)
+
+    val isVulkan: Boolean
+      get() = gpuApi.equals("vulkan", ignoreCase = true) ||
+        gpuContext.equals("androidvk", ignoreCase = true) ||
+        currentVo.contains("androidvk", ignoreCase = true)
+  }
+
+  private fun runtimeRenderBackend(): RuntimeRenderBackend {
+    fun prop(name: String): String = runCatching { MPVLib.getPropertyString(name).orEmpty() }.getOrDefault("")
+
+    return RuntimeRenderBackend(
+      vo = prop("vo"),
+      currentVo = prop("current-vo"),
+      gpuApi = prop("gpu-api"),
+      gpuContext = prop("gpu-context"),
+    )
+  }
+
+  private fun hdrScreenOutputPipelineState(mode: HdrScreenMode = _hdrScreenMode.value): HdrPipelineState {
+    if (mode == HdrScreenMode.OFF) return HdrPipelineState(true, "")
+
+    val runtimeBackend = runtimeRenderBackend()
+    val runtimeBackendKnown =
+      runtimeBackend.vo.isNotBlank() ||
+        runtimeBackend.currentVo.isNotBlank() ||
+        runtimeBackend.gpuApi.isNotBlank() ||
+        runtimeBackend.gpuContext.isNotBlank()
+
+    val runtimeReady = runtimeBackend.isGpuNext && runtimeBackend.isVulkan
+    val configuredReady = decoderPreferences.gpuNext.get() && decoderPreferences.useVulkan.get()
+    val available = if (runtimeBackendKnown) runtimeReady else configuredReady
+
+    return HdrPipelineState(
+      available = available,
+      message =
+        if (runtimeBackendKnown) {
+          "HDR needs active GPU Next + Vulkan"
+        } else {
+          "HDR needs GPU Next + Vulkan"
+        },
+    )
   }
 
   private fun initialHdrScreenMode(): HdrScreenMode {

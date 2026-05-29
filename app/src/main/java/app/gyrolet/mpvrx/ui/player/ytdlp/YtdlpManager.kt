@@ -81,6 +81,11 @@ object YtdlpManager {
             Os.setenv("PYTHONPATH", "$ytdlDir/python313.zip:$ytdlDir:$nativeLibDir", true)
             Os.setenv("SSL_CERT_FILE", File(context.filesDir, "cacert.pem").absolutePath, true)
             
+            val curlBinaryPath = File(nativeLibDir, "libcurl.so").absolutePath
+            Os.setenv("CURL_PATH", curlBinaryPath, true)
+            Os.setenv("CURL_CA_BUNDLE", File(context.filesDir, "cacert.pem").absolutePath, true)
+            Os.setenv("MPVRX_FILES_DIR", context.filesDir.absolutePath, true)
+            
             // Add nativeLibDir to PATH so scripts can find our bridge if they search PATH
             val currentPath = runCatching { Os.getenv("PATH") }.getOrNull()
             val newPath = if (currentPath.isNullOrBlank()) nativeLibDir else "$nativeLibDir:$currentPath"

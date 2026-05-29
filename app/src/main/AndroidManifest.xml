@@ -27,6 +27,7 @@
 
     <application
         android:name=".App"
+        android:allowBackup="false"
         android:appCategory="video"
         android:extractNativeLibs="true"
         android:enableOnBackInvokedCallback="true"
@@ -37,6 +38,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.mpvrx"
         android:largeHeap="true"
+        android:fullBackupContent="false"
         android:hardwareAccelerated="true"
         android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="35">
