@@ -54,11 +54,17 @@ import app.gyrolet.mpvrx.ui.player.MPVProfile
 import app.gyrolet.mpvrx.ui.utils.LocalBackStack
 import app.gyrolet.mpvrx.ui.utils.popSafely
 import app.gyrolet.mpvrx.ui.preferences.VulkanUtils
+import app.gyrolet.mpvrx.ui.preferences.GpuDriverPreferencesScreen
 import kotlinx.serialization.Serializable
 import me.zhanghai.compose.preference.ListPreference
+import me.zhanghai.compose.preference.Preference
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
-import me.zhanghai.compose.preference.SwitchPreference
+import app.gyrolet.mpvrx.ui.preferences.components.AdaptiveSwitchPreference
 import org.koin.compose.koinInject
+
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
+import app.gyrolet.mpvrx.preferences.GpuDriverPreferences
 
 @Serializable
 object DecoderPreferencesScreen : Screen {
@@ -125,7 +131,7 @@ object DecoderPreferencesScreen : Screen {
               PreferenceDivider()
 
               val tryHWDecoding by preferences.tryHWDecoding.collectAsState()
-              SwitchPreference(
+              AdaptiveSwitchPreference(
                 value = tryHWDecoding,
                 onValueChange = {
                   preferences.tryHWDecoding.set(it)
@@ -137,7 +143,7 @@ object DecoderPreferencesScreen : Screen {
 
               val gpuNext by preferences.gpuNext.collectAsState()
               val useVulkan by preferences.useVulkan.collectAsState() // Added to check Vulkan state
-              SwitchPreference(
+              AdaptiveSwitchPreference(
                 value = gpuNext,
                 onValueChange = { enabled ->
                     if (enabled && !gpuNext && !useVulkan) { // Only show warning if Vulkan is disabled
@@ -205,7 +211,7 @@ object DecoderPreferencesScreen : Screen {
 
               PreferenceDivider()
 
-              SwitchPreference(
+              AdaptiveSwitchPreference(
                 value = useVulkan,
                 onValueChange = { enabled ->
                   preferences.useVulkan.set(enabled)
@@ -252,7 +258,7 @@ object DecoderPreferencesScreen : Screen {
               PreferenceDivider()
 
               val useYUV420p by preferences.useYUV420P.collectAsState()
-              SwitchPreference(
+              AdaptiveSwitchPreference(
                 value = useYUV420p,
                 onValueChange = {
                   preferences.useYUV420P.set(it)
@@ -269,7 +275,7 @@ object DecoderPreferencesScreen : Screen {
               PreferenceDivider()
               
               val enableAnime4K by preferences.enableAnime4K.collectAsState()
-              SwitchPreference(
+              AdaptiveSwitchPreference(
                 value = enableAnime4K,
                 onValueChange = { enabled ->
                     preferences.enableAnime4K.set(enabled)
@@ -395,6 +401,29 @@ object DecoderPreferencesScreen : Screen {
                   }
                 }
               }
+
+              Preference(
+                title = { Text(stringResource(R.string.pref_gpu_driver_title)) },
+                summary = {
+                  Text(
+                    "Manage custom GPU drivers (Adreno/Turnip)",
+                    color = MaterialTheme.colorScheme.outline
+                  )
+                },
+                icon = {
+                  Icon(
+                    Icons.Default.Memory,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                  )
+                },
+                onClick = {
+                  backstack.add(GpuDriverPreferencesScreen)
+                }
+              )
+
+              PreferenceDivider()
+
             }
           }
 
@@ -404,8 +433,9 @@ object DecoderPreferencesScreen : Screen {
   }
 }
 
-object VulkanUtils {
+object VulkanUtils : KoinComponent {
     private const val TAG = "VulkanUtils"
+    private val gpuDriverPreferences: GpuDriverPreferences by inject()
 
     /**
      * Checks if the device supports Vulkan for MPV rendering
@@ -419,6 +449,12 @@ object VulkanUtils {
      */
     fun isVulkanSupported(context: Context): Boolean {
         try {
+            // Bypass all system checks if a custom driver is active
+            if (gpuDriverPreferences.activeDriverId.get() != "system") {
+                Log.d(TAG, "Custom GPU driver is active, bypassing system Vulkan checks.")
+                return true
+            }
+
             // Vulkan 1.3 requires Android 13 (API 33) minimum
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 Log.d(TAG, "Vulkan not supported: Android version ${Build.VERSION.SDK_INT} < 33 (Tiramisu)")

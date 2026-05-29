@@ -205,7 +205,11 @@ fun MoreSheet(
       LazyRow(
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
       ) {
-        items(7) { page ->
+        items(
+          count = 7,
+          key = { it },
+          contentType = { "stats_page" }
+        ) { page ->
           FilterChip(
             label = {
               Text(
@@ -265,7 +269,11 @@ fun MoreSheet(
         LazyRow(
           horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.smaller),
         ) {
-          items(Anime4KManager.Mode.entries) { mode ->
+          items(
+            items = Anime4KManager.Mode.entries,
+            key = { it.name },
+            contentType = { "anime4k_mode" }
+          ) { mode ->
             FilterChip(
               label = { Text(stringResource(mode.titleRes)) },
               selected = anime4kMode == mode.name,
@@ -449,7 +457,7 @@ fun TimePickerDialog(
       }
     }
   }
-  }
+}
 
 @Composable
 fun SectionHeaderWithInfo(

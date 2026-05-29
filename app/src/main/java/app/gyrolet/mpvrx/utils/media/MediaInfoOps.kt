@@ -8,6 +8,14 @@ import kotlinx.coroutines.withContext
 import net.mediaarea.mediainfo.lib.MediaInfo
 
 object MediaInfoOps {
+  init {
+    try {
+        Class.forName("net.mediaarea.mediainfo.lib.MediaInfo")
+        android.util.Log.d("MediaInfoOps", "MediaInfo library found")
+    } catch (e: Throwable) {
+        android.util.Log.e("MediaInfoOps", "MediaInfo library NOT found or failed to load!", e)
+    }
+  }
   /**
    * Extract detailed media information from a video file
    */
@@ -420,6 +428,7 @@ object MediaInfoOps {
             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
               ?.toFloatOrNull() ?: 0f,
           hasEmbeddedSubtitles = false,
+          subtitleCodec = "",
         )
       } finally {
         retriever.release()
@@ -461,5 +470,16 @@ object MediaInfoOps {
         pfd.close()
       }
     }.getOrDefault(0)
+  }
+
+  /**
+   * Formats duration in milliseconds to a human-readable string (HH:MM:SS.mmm)
+   */
+  fun formatDuration(durationMs: Long): String {
+    val hours = durationMs / 3600000
+    val minutes = (durationMs % 3600000) / 60000
+    val seconds = (durationMs % 60000) / 1000
+    val millis = durationMs % 1000
+    return "%02d:%02d:%02d.%03d".format(hours, minutes, seconds, millis)
   }
 }

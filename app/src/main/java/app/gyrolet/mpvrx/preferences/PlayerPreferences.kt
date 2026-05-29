@@ -110,6 +110,8 @@ class PlayerPreferences(
   val autoplayAfterScreenUnlock = preferenceStore.getBoolean("autoplay_after_screen_unlock", false)
   val enableMediaInfoIntent = preferenceStore.getBoolean("enable_mediainfo_intent", true)
 
+  val enableExoPlayer = preferenceStore.getBoolean("enable_exoplayer", false)
+
   // Custom Buttons - JSON List
   val customButtons = preferenceStore.getString("custom_buttons_json", "[]")
 

@@ -584,6 +584,7 @@ private fun RecentItemsContent(
                   is RecentlyPlayedItem.PlaylistItem -> "playlist_${item.playlist.id}_${item.timestamp}"
                 }
               },
+              contentType = { index -> if (recentItems[index] is RecentlyPlayedItem.VideoItem) "video" else "playlist" },
             ) { index ->
               when (val item = recentItems[index]) {
                 is RecentlyPlayedItem.VideoItem -> {
@@ -695,6 +696,7 @@ private fun RecentItemsContent(
                   is RecentlyPlayedItem.PlaylistItem -> "playlist_${item.playlist.id}_${item.timestamp}"
                 }
               },
+              contentType = { index -> if (recentItems[index] is RecentlyPlayedItem.VideoItem) "video" else "playlist" },
             ) { index ->
               when (val item = recentItems[index]) {
                 is RecentlyPlayedItem.VideoItem -> {

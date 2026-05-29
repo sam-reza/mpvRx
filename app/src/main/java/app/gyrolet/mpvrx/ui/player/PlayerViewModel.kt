@@ -4237,6 +4237,7 @@ class PlayerViewModel(
         )
       }
       AmbientVisualMode.FRAME_EXTEND -> applyFrameExtendPreset(AmbientShaderPresets.frameExtendFast)
+      AmbientVisualMode.YOUTUBE -> applyAmbientProfileYouTube()
     }
   }
 
@@ -4257,6 +4258,7 @@ class PlayerViewModel(
         )
       }
       AmbientVisualMode.FRAME_EXTEND -> applyFrameExtendPreset(AmbientShaderPresets.frameExtendBalanced)
+      AmbientVisualMode.YOUTUBE -> applyAmbientProfileYouTube()
     }
   }
 
@@ -4277,6 +4279,7 @@ class PlayerViewModel(
         )
       }
       AmbientVisualMode.FRAME_EXTEND -> applyFrameExtendPreset(AmbientShaderPresets.frameExtendHighQuality)
+      AmbientVisualMode.YOUTUBE -> applyAmbientProfileYouTube()
     }
   }
 
@@ -4297,7 +4300,14 @@ class PlayerViewModel(
         )
       }
       AmbientVisualMode.FRAME_EXTEND -> applyFrameExtendPreset(AmbientShaderPresets.frameExtendEco)
+      AmbientVisualMode.YOUTUBE -> applyAmbientProfileYouTube()
     }
+  }
+
+  fun applyAmbientProfileYouTube() {
+    updateAmbientVisualMode(AmbientVisualMode.YOUTUBE)
+    // No other parameters are needed as YouTube mode has baked-in settings.
+    scheduleAmbientUpdate()
   }
 
   fun updateAmbientBatterySaver(enabled: Boolean) {
@@ -4504,6 +4514,11 @@ class PlayerViewModel(
             glowMix = _frameExtendGlowMix.value,
             ditherNoise = ditherNoise,
             ecoMode = ecoMode,
+          )
+        AmbientVisualMode.YOUTUBE ->
+          AmbientYouTubeShaderSpec(
+            context = context,
+            shared = shared,
           )
       }
 

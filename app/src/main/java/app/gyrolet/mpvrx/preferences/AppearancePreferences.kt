@@ -35,6 +35,27 @@ class AppearancePreferences(
   val showPlaylistsTab = preferenceStore.getBoolean("show_playlists_tab", true)
   val showNetworkTab = preferenceStore.getBoolean("show_network_tab", false)
 
+  // Liquid Glass Effects
+  val enableLiquidGlass = preferenceStore.getBoolean("enable_liquid_glass", false)
+  val liquidToggleColor = preferenceStore.getInt("liquid_toggle_color", 0xFF000080.toInt())
+  val liquidSeekbarColor = preferenceStore.getInt("liquid_seekbar_color", 0xFFFF4500.toInt())
+
+  // Liquid Dialog Parameters
+  val liquidDialogBlur = preferenceStore.getFloat("liquid_dialog_blur", 32f)
+  val liquidDialogSaturation = preferenceStore.getFloat("liquid_dialog_saturation", 1.3f)
+  val liquidDialogBrightness = preferenceStore.getFloat("liquid_dialog_brightness", 0.08f)
+  val liquidDialogLensRadius = preferenceStore.getFloat("liquid_dialog_lens_radius", 55f)
+  val liquidDialogLensDepth = preferenceStore.getFloat("liquid_dialog_lens_depth", 85f)
+  val liquidDialogContainerAlpha = preferenceStore.getFloat("liquid_dialog_container_alpha", 0.35f)
+  val liquidDialogDarkText = preferenceStore.getBoolean("liquid_dialog_dark_text", false)
+
+  // Liquid Button Parameters
+  val liquidButtonBlur = preferenceStore.getFloat("liquid_button_blur", 26f)
+  val liquidButtonLensRadius = preferenceStore.getFloat("liquid_button_lens_radius", 42f)
+  val liquidButtonLensDepth = preferenceStore.getFloat("liquid_button_lens_depth", 72f)
+  val liquidButtonOpacity = preferenceStore.getFloat("liquid_button_opacity", 0.15f)
+  val liquidButtonTint = preferenceStore.getInt("liquid_button_tint", 0x26FFFFFF)
+
   val topLeftControls =
     preferenceStore.getString(
       "top_left_controls",
@@ -44,13 +65,13 @@ class AppearancePreferences(
   val topRightControls =
     preferenceStore.getString(
       "top_right_controls",
-      "CURRENT_CHAPTER,DECODER,AUDIO_TRACK,SUBTITLES,MORE_OPTIONS",
+      "CURRENT_CHAPTER,DECODER,AUDIO_TRACK,SUBTITLES,TIME_NETWORK,VIDEO_FILTERS,MORE_OPTIONS",
     )
 
   val bottomRightControls =
     preferenceStore.getString(
       "bottom_right_controls",
-      "FRAME_NAVIGATION,VIDEO_ZOOM,PICTURE_IN_PICTURE,ASPECT_RATIO",
+      "FRAME_NAVIGATION,VIDEO_ZOOM,PICTURE_IN_PICTURE,ASPECT_RATIO,AMBIENT_MODE",
     )
 
   val bottomLeftControls =
@@ -62,7 +83,7 @@ class AppearancePreferences(
   val portraitBottomControls =
     preferenceStore.getString(
       "portrait_bottom_controls",
-      "SCREEN_ROTATION,DECODER,AUDIO_TRACK,SUBTITLES,BOOKMARKS_CHAPTERS,PLAYBACK_SPEED,BACKGROUND_PLAYBACK,REPEAT_MODE,SHUFFLE,VIDEO_ZOOM,FRAME_NAVIGATION,ASPECT_RATIO,PICTURE_IN_PICTURE,LOCK_CONTROLS,MORE_OPTIONS",
+      "SCREEN_ROTATION,DECODER,AUDIO_TRACK,SUBTITLES,BOOKMARKS_CHAPTERS,PLAYBACK_SPEED,BACKGROUND_PLAYBACK,REPEAT_MODE,SHUFFLE,VIDEO_ZOOM,FRAME_NAVIGATION,ASPECT_RATIO,PICTURE_IN_PICTURE,LOCK_CONTROLS,TIME_NETWORK,AMBIENT_MODE,VIDEO_FILTERS,MORE_OPTIONS",
     )
 
   fun parseButtons(
