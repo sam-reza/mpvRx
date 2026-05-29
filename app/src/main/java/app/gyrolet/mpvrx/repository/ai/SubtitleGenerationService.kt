@@ -183,7 +183,7 @@ class SubtitleGenerationService(
           if (isWebm) ".webm" else ".m4a",
           context.cacheDir,
         )
-        if (!isActive) { outputFile!!.delete(); return@runCatching null }
+      if (!isActive) { outputFile.delete(); return@runCatching null }
 
         extractor.selectTrack(audioTrackIndex)
         extractor.seekTo(startMs * 1000, MediaExtractor.SEEK_TO_CLOSEST_SYNC)

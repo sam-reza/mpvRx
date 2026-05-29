@@ -79,6 +79,11 @@ import android.webkit.MimeTypeMap
 import app.gyrolet.mpvrx.preferences.AdvancedPreferences
 import app.gyrolet.mpvrx.preferences.DecoderPreferences
 import kotlin.properties.ReadOnlyProperty
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import java.util.concurrent.TimeUnit
 import kotlin.reflect.KProperty
 import kotlin.math.roundToInt
 
@@ -3043,6 +3048,7 @@ class PlayerViewModel(
       "seek_by" -> seekByWithText(data.toInt(), null)
       "seek_to" -> seekToWithText(data.toInt(), null)
       "software_keyboard" -> handleSoftwareKeyboard(data)
+      "run_curl" -> handleCurlRequest(data)
     }
 
     MPVLib.setPropertyString(property, "")
@@ -3101,6 +3107,183 @@ class PlayerViewModel(
   @Suppress("DEPRECATION")
   private fun forceHideSoftwareKeyboard() {
     inputMethodManager.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, 0)
+  }
+
+  // ==================== Curl / OkHttp Bridge ====================
+
+  private fun handleCurlRequest(reqId: String) {
+    viewModelScope.launch(Dispatchers.IO) {
+      val curlDir = File(host.context.filesDir, "curl")
+      curlDir.mkdirs()
+      val reqFile = File(curlDir, "curl_req_${reqId}.json")
+      val resFile = File(curlDir, "curl_res_${reqId}.json")
+
+      if (!reqFile.exists()) return@launch
+
+      try {
+        val requestJson = reqFile.readText()
+        val responseJson = executeCurlRequest(requestJson)
+        resFile.writeText(responseJson)
+      } catch (e: Exception) {
+        val escaped = e.message?.replace("\"", "\\\"")?.replace("\n", "\\n") ?: "Unknown error"
+        resFile.writeText("""{"status":-1,"stdout":"","stderr":"$escaped"}""")
+      } finally {
+        reqFile.delete()
+      }
+    }
+  }
+
+  private suspend fun executeCurlRequest(requestJson: String): String {
+    val json = Json { ignoreUnknownKeys = true }
+    val curlRequest = json.decodeFromString<CurlRequestJson>(requestJson)
+    val parsed = parseCurlArgs(curlRequest.args)
+
+    val client = OkHttpClient.Builder()
+      .followRedirects(parsed.followRedirects)
+      .followSslRedirects(parsed.followRedirects)
+      .connectTimeout(parsed.connectTimeoutSec, TimeUnit.SECONDS)
+      .readTimeout(parsed.readTimeoutSec, TimeUnit.SECONDS)
+      .writeTimeout(parsed.readTimeoutSec, TimeUnit.SECONDS)
+      .build()
+
+    val url = parsed.url ?: return """{"status":-1,"stdout":"","stderr":"No URL specified"}"""
+
+    val body = parsed.body?.let {
+      val mediaType = parsed.contentType?.toMediaType() ?: "application/octet-stream".toMediaType()
+      it.toRequestBody(mediaType)
+    }
+
+    val requestBuilder = Request.Builder().url(url)
+    parsed.method.uppercase().let { method ->
+      when (method) {
+        "GET" -> requestBuilder.get()
+        "POST" -> requestBuilder.post(body ?: "".toRequestBody())
+        "PUT" -> requestBuilder.put(body ?: "".toRequestBody())
+        "PATCH" -> requestBuilder.patch(body ?: "".toRequestBody())
+        "DELETE" -> requestBuilder.delete(body)
+        "HEAD" -> requestBuilder.head()
+        else -> requestBuilder.method(method, body)
+      }
+    }
+
+    parsed.headers.forEach { (key, value) ->
+      if (!key.equals("Content-Type", ignoreCase = true) || parsed.contentType == null) {
+        requestBuilder.addHeader(key, value)
+      }
+    }
+    parsed.cookie?.let { requestBuilder.addHeader("Cookie", it) }
+    parsed.userAgent?.let { requestBuilder.addHeader("User-Agent", it) }
+    parsed.referer?.let { requestBuilder.addHeader("Referer", it) }
+
+    return try {
+      val response = withContext(Dispatchers.IO) { client.newCall(requestBuilder.build()).execute() }
+      val responseBody = response.body.string()
+      val statusCode = response.code
+      val success = statusCode in 200..399
+      // Maps HTTP status to exit codes: 0 for success, otherwise simulate curl's exit code
+      val exitCode = if (success) 0 else 22  // curl exit code 22 = HTTP error
+      buildString {
+        append("""{"status":$exitCode,"stdout":""")
+        append(Json.encodeToString(responseBody))
+        append(""","stderr":""")
+        if (!success) {
+          append(Json.encodeToString("HTTP $statusCode"))
+        }
+        append(""""}""")
+      }
+    } catch (e: Exception) {
+      val escaped = e.message?.replace("\"", "\\\"")?.replace("\n", "\\n") ?: "Request failed"
+      """{"status":-1,"stdout":"","stderr":"$escaped"}"""
+    }
+  }
+
+  @Serializable
+  private data class CurlRequestJson(val args: List<String>)
+
+  private data class ParsedCurlArgs(
+    val url: String? = null,
+    val method: String = "GET",
+    val headers: Map<String, String> = emptyMap(),
+    val body: String? = null,
+    val userAgent: String? = null,
+    val cookie: String? = null,
+    val referer: String? = null,
+    val followRedirects: Boolean = true,
+    val connectTimeoutSec: Long = 30,
+    val readTimeoutSec: Long = 60,
+    val contentType: String? = null,
+  )
+
+  private fun parseCurlArgs(args: List<String>): ParsedCurlArgs {
+    var url: String? = null
+    var method = "GET"
+    val headers = mutableMapOf<String, String>()
+    var body: String? = null
+    var userAgent: String? = null
+    var cookie: String? = null
+    var referer: String? = null
+    var followRedirects = true
+    var connectTimeoutSec = 30L
+    var readTimeoutSec = 60L
+    var contentType: String? = null
+
+    var i = 0
+    while (i < args.size) {
+      val arg = args[i]
+      when {
+        arg == "curl" -> { i++; continue }
+        arg in listOf("-X", "--request") && i + 1 < args.size -> { method = args[++i]; i++; continue }
+        arg in listOf("-H", "--header") && i + 1 < args.size -> {
+          val header = args[++i]
+          val colonIdx = header.indexOf(':')
+          if (colonIdx > 0) {
+            val key = header.substring(0, colonIdx).trim()
+            val value = header.substring(colonIdx + 1).trim()
+            if (key.equals("Content-Type", ignoreCase = true)) {
+              contentType = value
+            } else {
+              headers[key] = value
+            }
+          }
+          i++; continue
+        }
+        arg in listOf("-d", "--data", "--data-raw", "--data-binary") && i + 1 < args.size -> {
+          body = args[++i]
+          if (method == "GET") method = "POST"
+          i++; continue
+        }
+        arg in listOf("-A", "--user-agent") && i + 1 < args.size -> { userAgent = args[++i]; i++; continue }
+        arg in listOf("-b", "--cookie") && i + 1 < args.size -> { cookie = args[++i]; i++; continue }
+        arg in listOf("-e", "--referer") && i + 1 < args.size -> { referer = args[++i]; i++; continue }
+        arg in listOf("-L", "--location") -> { followRedirects = true; i++; continue }
+        arg == "--no-location" -> { followRedirects = false; i++; continue }
+        arg in listOf("--connect-timeout") && i + 1 < args.size -> { connectTimeoutSec = args[++i].toLongOrNull() ?: 30L; i++; continue }
+        arg in listOf("--max-time") && i + 1 < args.size -> { readTimeoutSec = args[++i].toLongOrNull() ?: 60L; i++; continue }
+        arg in listOf("-k", "--insecure") -> { i++; continue }
+        arg in listOf("-s", "--silent", "-S", "--show-error", "-v", "--verbose", "--compressed") -> { i++; continue }
+        arg in listOf("-o", "--output") && i + 1 < args.size -> { i++; i++; continue }
+        arg in listOf("-D", "--dump-header") && i + 1 < args.size -> { i++; i++; continue }
+        arg.startsWith("-") -> { i++; continue }
+        else -> {
+          if (url == null) url = arg
+          i++; continue
+        }
+      }
+    }
+
+    return ParsedCurlArgs(
+      url = url,
+      method = method,
+      headers = headers,
+      body = body,
+      userAgent = userAgent,
+      cookie = cookie,
+      referer = referer,
+      followRedirects = followRedirects,
+      connectTimeoutSec = connectTimeoutSec,
+      readTimeoutSec = readTimeoutSec,
+      contentType = contentType,
+    )
   }
 
   // ==================== Gesture Handling ====================

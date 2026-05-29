@@ -2,6 +2,7 @@ package app.gyrolet.mpvrx.ui.player
 
 import android.content.Context
 import android.os.Environment
+import android.system.Os
 import android.util.AttributeSet
 import android.util.Log
 
@@ -23,6 +24,7 @@ import app.gyrolet.mpvrx.ui.preferences.VulkanUtils
 import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.KeyMapping
 import `is`.xyz.mpv.MPVLib
+import java.io.File
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import kotlin.reflect.KProperty
@@ -192,6 +194,7 @@ class MPVView(
 
     setupSubtitlesOptions()
     setupAudioOptions()
+    setupCurlEnv()
     YtdlpManager.setupMpvOptions(context, ytdlPreferences, subtitlesPreferences)
   }
 
@@ -305,6 +308,7 @@ class MPVView(
       "user-data/mpvrx/seek_by_with_text" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
       "user-data/mpvrx/seek_to_with_text" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
       "user-data/mpvrx/software_keyboard" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
+      "user-data/mpvrx/run_curl" to MPVLib.MpvFormat.MPV_FORMAT_STRING,
     )
 
   private fun setupAudioOptions() {
@@ -320,6 +324,14 @@ class MPVView(
     // Volume normalization using dynamic audio normalization filter
     if (audioPreferences.volumeNormalization.get()) {
       MPVLib.setOptionString("af", "dynaudnorm")
+    }
+  }
+
+  private fun setupCurlEnv() {
+    runCatching {
+      val curlDir = File(context.filesDir, "curl")
+      curlDir.mkdirs()
+      Os.setenv("MPVRX_FILES_DIR", curlDir.absolutePath, true)
     }
   }
 

@@ -2,8 +2,12 @@ package app.gyrolet.mpvrx.ui.browser.networkstreaming
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import app.gyrolet.mpvrx.database.repository.PlaylistRepository
+import app.gyrolet.mpvrx.ui.browser.networkstreaming.proxy.NetworkStreamingProxy
+import app.gyrolet.mpvrx.utils.media.M3UParseResult
+import app.gyrolet.mpvrx.utils.media.M3UParser
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -14,7 +18,6 @@ import app.gyrolet.mpvrx.domain.network.NetworkFile
 import app.gyrolet.mpvrx.domain.network.NetworkProtocol
 import app.gyrolet.mpvrx.repository.NetworkRepository
 import app.gyrolet.mpvrx.ui.browser.networkstreaming.clients.NetworkClientFactory
-import app.gyrolet.mpvrx.utils.media.M3UParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -150,25 +153,103 @@ class NetworkBrowserViewModel(
 
     Log.d(TAG, "Importing M3U playlist from: $sourceUrl")
 
-    val playlistId = playlistRepository.createM3UPlaylistFromContent(
-      content = content,
-      sourceName = file.name,
-      sourceUrl = sourceUrl,
-    ).getOrElse { e ->
-      Log.e(TAG, "Failed to create playlist from M3U content", e)
-      _error.value = "Failed to import playlist: ${e.message}"
+    // Parse the M3U content using the sourceUrl for relative path resolution
+    val parseResult = M3UParser.parseContent(content, sourceUrl)
+    if (parseResult !is M3UParseResult.Success) {
+      _error.value = "Failed to parse M3U: ${parseResult.message}"
       return
     }
-    _importedPlaylistId.emit(playlistId.toInt())
+
+    Log.d(TAG, "Parsed ${parseResult.items.size} items from M3U playlist")
+
+    if (parseResult.items.isEmpty()) {
+      _error.value = "M3U playlist is empty"
+      return
+    }
+
+    // Build playable URIs for each M3U entry.
+    // For protocols mpv can't handle natively (dav[s]://, smb://, etc.),
+    // we create proxy streams so mpv can play them via HTTP.
+    val useProxy = connection.protocol in PROXY_PROTOCOLS
+    val proxy = if (useProxy) NetworkStreamingProxy.getInstance() else null
+    val playlistUris = ArrayList<Uri>(parseResult.items.size)
+
+    for ((i, item) in parseResult.items.withIndex()) {
+      val entryUri = Uri.parse(item.url)
+      val scheme = entryUri.scheme?.lowercase()
+
+      val playableUri = when {
+        // mpv can handle these protocols directly
+        scheme in listOf("http", "https", "ftp") -> entryUri
+
+        // Protocols that need the local HTTP proxy for seeking support
+        useProxy -> {
+          val filePath = entryUri.path ?: item.url
+          val streamId = "${connectionId}_m3u_${System.currentTimeMillis()}_$i"
+          val proxyUrl = proxy!!.registerStream(
+            streamId = streamId,
+            connection = connection,
+            filePath = filePath,
+            fileSize = -1L,
+            mimeType = "video/mp4",
+          )
+          Uri.parse(proxyUrl)
+        }
+
+        // Fallback: content provider streaming
+        else -> {
+          NetworkStreamingProvider.setConnection(connectionId, connection)
+          NetworkStreamingProvider.getUri(application, connectionId, entryUri.path ?: item.url)
+        }
+      }
+
+      playlistUris.add(playableUri)
+    }
+
+    // Start the player with the full playlist — like mpv-android does when
+    // opening an M3U file natively. This gives the user an immediate playlist
+    // experience instead of requiring a separate navigation step.
+    val intent = Intent(Intent.ACTION_VIEW, playlistUris.first())
+    intent.setClass(application, app.gyrolet.mpvrx.ui.player.PlayerActivity::class.java)
+    intent.putExtra("internal_launch", true)
+    intent.putExtra("launch_source", "network_stream_m3u")
+    intent.putExtra("playlist", playlistUris)
+    intent.putExtra("playlist_index", 0)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    application.startActivity(intent)
+
+    // Also save the playlist in the database for persistence so the user can
+    // find it later in the playlist library. Stores playable proxy URLs so
+    // the playlist entries actually work when accessed from the library.
+    viewModelScope.launch {
+      try {
+        val playlistName = file.name.substringBeforeLast('.').replace('_', ' ').replace('-', ' ')
+          .trim().ifEmpty { file.name }
+        val playlistIdLong = playlistRepository.createPlaylist(playlistName)
+
+        val items = parseResult.items.mapIndexed { index, item ->
+          val playableUrl = playlistUris.getOrElse(index) { Uri.parse(item.url) }.toString()
+          val title = item.title ?: "Item ${index + 1}"
+          playableUrl to title
+        }
+        playlistRepository.addItemsToPlaylist(playlistIdLong.toInt(), items)
+        _importedPlaylistId.emit(playlistIdLong.toInt())
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to save M3U playlist to database", e)
+      }
+    }
   }
 
   /**
    * Builds a best-effort URL for the given file path on a network connection.
    * Used as a fallback when [NetworkClientFactory] cannot produce a URI.
+   *
+   * Uses the actual protocol scheme (dav://, davs://, smb://, ftp://) so that
+   * [M3UParser] can correctly resolve relative paths inside M3U playlists.
    */
   private fun buildFallbackSourceUrl(connection: NetworkConnection, filePath: String): String {
     val protocol = when (connection.protocol) {
-      NetworkProtocol.WEBDAV -> if (connection.useHttps) "https" else "http"
+      NetworkProtocol.WEBDAV -> if (connection.useHttps) "davs" else "dav"
       NetworkProtocol.FTP    -> "ftp"
       NetworkProtocol.SMB    -> "smb"
     }

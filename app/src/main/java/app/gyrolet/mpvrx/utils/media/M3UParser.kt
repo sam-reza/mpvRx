@@ -30,8 +30,9 @@ data class M3UPlaylistItem(
  * Result of M3U playlist parsing
  */
 sealed class M3UParseResult {
+  open val message: String? get() = null
   data class Success(val playlistName: String, val items: List<M3UPlaylistItem>) : M3UParseResult()
-  data class Error(val message: String, val exception: Throwable? = null) : M3UParseResult()
+  data class Error(override val message: String, val exception: Throwable? = null) : M3UParseResult()
 }
 
 /**
@@ -55,30 +56,47 @@ object M3UParser {
   private val extinfInfoRegex = """(-?\d+)(.*),(.*)""".toRegex()
 
   /**
-   * Parse an M3U/M3U8 playlist from a URL
+   * Parse an M3U/M3U8 playlist from a URL.
+   * Supports http, https, ftp, and file URLs directly.
+   * For other schemes (dav[s]://, smb://, etc.) the caller must
+   * fetch the content separately and pass it to [parseContent].
    */
   suspend fun parseFromUrl(url: String, userAgent: String? = null): M3UParseResult = withContext(Dispatchers.IO) {
     try {
       Log.d(TAG, "Parsing M3U playlist from URL: $url")
-      
+
       val urlObj = URL(url)
-      val connection = urlObj.openConnection() as HttpURLConnection
-      connection.connectTimeout = TIMEOUT_MS
-      connection.readTimeout = TIMEOUT_MS
-      connection.requestMethod = "GET"
-      connection.setRequestProperty("User-Agent", userAgent?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT)
-      
-      val responseCode = connection.responseCode
-      if (responseCode != HttpURLConnection.HTTP_OK) {
-        return@withContext M3UParseResult.Error("HTTP error: $responseCode")
+      val scheme = urlObj.protocol.lowercase()
+
+      val content: String = when (scheme) {
+        "http", "https" -> {
+          val connection = urlObj.openConnection() as HttpURLConnection
+          connection.connectTimeout = TIMEOUT_MS
+          connection.readTimeout = TIMEOUT_MS
+          connection.requestMethod = "GET"
+          connection.setRequestProperty("User-Agent", userAgent?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT)
+
+          val responseCode = connection.responseCode
+          if (responseCode != HttpURLConnection.HTTP_OK) {
+            connection.disconnect()
+            return@withContext M3UParseResult.Error("HTTP error: $responseCode")
+          }
+
+          BufferedReader(InputStreamReader(connection.inputStream, "UTF-8")).use { reader ->
+            reader.readText()
+          }.also { connection.disconnect() }
+        }
+        "ftp", "file" -> {
+          urlObj.openStream().bufferedReader(Charsets.UTF_8).use { it.readText() }
+        }
+        else -> {
+          return@withContext M3UParseResult.Error(
+            "Unsupported URL scheme: $scheme. Use http, https, ftp, or file for direct URL parsing. " +
+            "For WebDAV/SMB sources, import the playlist via the network browser instead."
+          )
+        }
       }
-      
-      val content = BufferedReader(InputStreamReader(connection.inputStream, "UTF-8")).use { reader ->
-        reader.readText()
-      }
-      
-      connection.disconnect()
-      
+
       parseContent(content, url)
     } catch (e: Exception) {
       Log.e(TAG, "Error parsing M3U playlist", e)

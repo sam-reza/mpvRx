@@ -1215,6 +1215,7 @@ class PlayerActivity :
       syncBundledAssetsIfNeeded()
       syncFromUserMpvDirectory(syncSubtitleFontsFolder = false)
       sanitizeInternalFontsDirectory()
+      writeCurlHookScripts()
       Log.d(TAG, "MPV config and scripts prepared successfully")
     }.onFailure { e ->
       Log.e(TAG, "Error copying MPV config and scripts", e)
@@ -1464,6 +1465,35 @@ class PlayerActivity :
 
     Utils.copyAssets(this@PlayerActivity)
     syncPrefs.edit().putLong("bundled_assets_version", currentVersion).apply()
+  }
+
+  private fun writeCurlHookScripts() {
+    val scriptsDir = File(filesDir, "scripts")
+    scriptsDir.mkdirs()
+
+    runCatching {
+      val luaScript = File(scriptsDir, "00-curl-hook.lua")
+      if (!luaScript.exists()) {
+        context.assets.open("scripts/00-curl-hook.lua").use { input ->
+          luaScript.outputStream().use { output -> input.copyTo(output) }
+        }
+        Log.d(TAG, "Written 00-curl-hook.lua")
+      }
+    }.onFailure { e ->
+      Log.e(TAG, "Failed to write 00-curl-hook.lua", e)
+    }
+
+    runCatching {
+      val jsScript = File(scriptsDir, "00-curl-hook.js")
+      if (!jsScript.exists()) {
+        context.assets.open("scripts/00-curl-hook.js").use { input ->
+          jsScript.outputStream().use { output -> input.copyTo(output) }
+        }
+        Log.d(TAG, "Written 00-curl-hook.js")
+      }
+    }.onFailure { e ->
+      Log.e(TAG, "Failed to write 00-curl-hook.js", e)
+    }
   }
 
   private fun scheduleDeferredSubtitleFontsSync() {

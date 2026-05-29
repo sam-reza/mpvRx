@@ -121,6 +121,11 @@ obj/
 .libs/
 
 # =========================
+# External submodules (excluded)
+# =========================
+/mpv-android/
+
+# =========================
 # Proguard mapping
 # =========================
 /mapping/
